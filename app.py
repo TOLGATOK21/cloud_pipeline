@@ -1,40 +1,43 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI
+from pydantic import BaseModel
 import joblib
-import numpy as np
+import pandas as pd
 
-# Flask uygulamasını başlat
-app = Flask(__name__)
+app = FastAPI()
 
 # Modeli yükle
-model = joblib.load('stock_model.pkl')
+model = joblib.load('xgb_high_model.pkl')
 
-# Özellik sırası – eğitimde hangi sırayla kullanıldıysa aynısını belirtin
-feature_order = ['MA20', 'MA50', 'Lag1', 'Lag2', 'Lag3']
+# Modelin beklediği feature isimleri (eğitimde kullandığın ile aynı)
+FEATURE_NAMES = ['Open', 'Low', 'Close', 'Adj Close', 'Volume',
+                 'High_lag_1', 'High_lag_2', 'High_lag_3', 'High_lag_4', 'High_lag_5',
+                 'High_ma_3', 'High_ma_7', 'weekday']
 
-@app.route('/predict', methods=['POST'])
-def predict():
-    try:
-        data = request.get_json()
-        input_dict = data['features']
+# API'ye gönderilecek JSON veri için Pydantic model tanımı
+class Features(BaseModel):
+    Open: float
+    Low: float
+    Close: float
+    Adj_Close: float
+    Volume: float
+    High_lag_1: float
+    High_lag_2: float
+    High_lag_3: float
+    High_lag_4: float
+    High_lag_5: float
+    High_ma_3: float
+    High_ma_7: float
+    weekday: int
 
-        # Özellikleri sıraya göre diz
-        features = np.array([input_dict[feature] for feature in feature_order]).reshape(1, -1)
+@app.post("/predict")
+def predict(features: Features):
+    # JSON'dan DataFrame oluştur
+    data_dict = features.dict()
+    # API'ye gelen "Adj_Close" ile modeldeki "Adj Close" farkına dikkat, onu düzeltelim
+    data_dict['Adj Close'] = data_dict.pop('Adj_Close')
+    df = pd.DataFrame([data_dict], columns=FEATURE_NAMES)
 
-        # Tahmin yap
-        prediction = model.predict(features)
-
-        return jsonify({
-            'prediction': int(prediction[0])
-        })
-
-    except Exception as e:
-        return jsonify({'error': str(e)}), 400
-
-
-@app.route('/')
-def home():
-    return 'Stock Price Prediction API is running.'
-
-# Ana fonksiyon
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000)
+    # Tahmin yap
+    prediction = model.predict(df)[0]
+    prediction_float = float(prediction)  # numpy tipini float'a çevir
+    return {"predicted_high": prediction_float}
